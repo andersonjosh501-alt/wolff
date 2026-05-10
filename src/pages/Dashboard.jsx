@@ -6,7 +6,7 @@ import StatusTab from '../components/status/StatusTab'
 import SettingsTab from '../components/settings/SettingsTab'
 
 export default function Dashboard() {
-  const { activeTab } = useApp()
+  const { activeTab, loadingData } = useApp()
 
   const renderTab = () => {
     switch (activeTab) {
@@ -16,6 +16,17 @@ export default function Dashboard() {
       case 'settings': return <SettingsTab />
       default: return <ClientsTab />
     }
+  }
+
+  if (loadingData) {
+    return (
+      <div className="flex h-screen bg-[#fafbfa]">
+        <Sidebar />
+        <main className="flex-1 flex items-center justify-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-2 border-sage-500 border-t-transparent"></div>
+        </main>
+      </div>
+    )
   }
 
   return (

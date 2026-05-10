@@ -1,113 +1,198 @@
-import { createContext, useContext, useState, useCallback } from 'react'
+import { createContext, useContext, useState, useCallback, useEffect } from 'react'
+import { supabase } from '../lib/supabase'
+import { useAuth } from './AuthContext'
+import toast from 'react-hot-toast'
 
 const AppContext = createContext({})
 
-// Demo data for the application
-const initialClients = [
-  {
-    id: '1', name: 'John Smith', email: 'john.smith@email.com', phone: '(555) 123-4567',
-    type: 'personal', status: 'in_progress', docStatus: 'partial',
-    missingDocs: ['W-2 (Employer B)', '1099-INT'], receivedDocs: ['W-2 (Employer A)', '1095-A', 'Prior Year Return'],
-    lastContact: '2026-05-07', notes: 'Second year client, switched jobs mid-year.',
-    bankInfo: null, ssn_last4: '4523', filing_status: 'Married Filing Jointly',
-    address: '123 Oak Street, Springfield, IL 62701',
-    communications: [
-      { date: '2026-05-07', type: 'email', direction: 'outbound', message: 'Reminder: Please send W-2 from Employer B', status: 'delivered' },
-      { date: '2026-05-05', type: 'email', direction: 'inbound', message: 'Here is my W-2 from Employer A', status: 'received' },
-    ]
-  },
-  {
-    id: '2', name: 'Sarah Johnson', email: 'sarah.j@email.com', phone: '(555) 234-5678',
-    type: 'personal', status: 'waiting_documents', docStatus: 'missing',
-    missingDocs: ['W-2', '1099-NEC', '1098 (Mortgage Interest)'], receivedDocs: ['Prior Year Return'],
-    lastContact: '2026-05-01', notes: 'Freelance income this year. First time filing with us.',
-    bankInfo: null, ssn_last4: '8891', filing_status: 'Single',
-    address: '456 Maple Ave, Springfield, IL 62702',
-    communications: [
-      { date: '2026-05-01', type: 'email', direction: 'outbound', message: 'Welcome! Please upload your tax documents.', status: 'delivered' },
-    ]
-  },
-  {
-    id: '3', name: 'Robert Chen', email: 'rchen@email.com', phone: '(555) 345-6789',
-    type: 'personal', status: 'ready_review', docStatus: 'complete',
-    missingDocs: [], receivedDocs: ['W-2', '1099-DIV', '1099-INT', '1098', 'Prior Year Return', 'K-1'],
-    lastContact: '2026-05-08', notes: 'Complex return with partnership income.',
-    bankInfo: { routing: '****1234', account: '****5678' }, ssn_last4: '3345', filing_status: 'Married Filing Jointly',
-    address: '789 Pine Road, Springfield, IL 62703',
-    communications: [
-      { date: '2026-05-08', type: 'email', direction: 'outbound', message: 'Your return is ready for review.', status: 'delivered' },
-    ]
-  },
-  {
-    id: '4', name: 'Emily Davis', email: 'emily.d@email.com', phone: '(555) 456-7890',
-    type: 'personal', status: 'complete', docStatus: 'complete',
-    missingDocs: [], receivedDocs: ['W-2', '1099-INT', 'Prior Year Return'],
-    lastContact: '2026-05-06', notes: 'Simple return. E-filed successfully.',
-    bankInfo: { routing: '****4321', account: '****8765' }, ssn_last4: '7712', filing_status: 'Single',
-    address: '321 Elm Street, Springfield, IL 62704',
-    communications: []
-  },
-  {
-    id: '5', name: 'Williams Family Trust', email: 'williams.trust@email.com', phone: '(555) 567-8901',
-    type: 'estate', status: 'in_progress', docStatus: 'partial',
-    missingDocs: ['Trust Agreement Amendment', 'Brokerage Statement'], receivedDocs: ['Trust Document', '1099-DIV', 'Prior Year 1041'],
-    lastContact: '2026-05-04', notes: 'Irrevocable trust. Distributes income to 3 beneficiaries.',
-    bankInfo: null, ssn_last4: '1198', filing_status: 'Trust',
-    address: '100 Trust Way, Springfield, IL 62701',
-    communications: []
-  },
-  {
-    id: '6', name: 'Henderson Estate', email: 'henderson.estate@lawfirm.com', phone: '(555) 678-9012',
-    type: 'estate', status: 'waiting_documents', docStatus: 'missing',
-    missingDocs: ['Death Certificate', 'Estate Inventory', 'Probate Documents'], receivedDocs: ['Prior Year 1041'],
-    lastContact: '2026-04-28', notes: 'New estate. Awaiting probate completion.',
-    bankInfo: null, ssn_last4: '5543', filing_status: 'Estate',
-    address: '200 Legal Drive, Springfield, IL 62702',
-    communications: []
-  },
-  {
-    id: '7', name: 'Greenfield Corp', email: 'accounting@greenfieldcorp.com', phone: '(555) 789-0123',
-    type: 'corporate', status: 'in_progress', docStatus: 'partial',
-    missingDocs: ['Q4 Payroll Reports', 'Depreciation Schedule'], receivedDocs: ['Trial Balance', 'Prior Year 1120', 'Bank Statements', 'Accounts Receivable Aging'],
-    lastContact: '2026-05-06', notes: 'C-Corp. 50 employees. Revenue ~$5M.',
-    bankInfo: { routing: '****9999', account: '****1111' }, ssn_last4: null, filing_status: 'C-Corporation',
-    address: '500 Corporate Blvd, Springfield, IL 62705',
-    ein: '12-3456789',
-    communications: []
-  },
-  {
-    id: '8', name: 'TechStart LLC', email: 'admin@techstartllc.com', phone: '(555) 890-1234',
-    type: 'corporate', status: 'not_started', docStatus: 'missing',
-    missingDocs: ['All financial statements', 'Bank Statements', 'Payroll Records'], receivedDocs: [],
-    lastContact: '2026-04-15', notes: 'New client. LLC taxed as partnership. 3 members.',
-    bankInfo: null, ssn_last4: null, filing_status: 'Partnership',
-    address: '600 Startup Lane, Springfield, IL 62706',
-    ein: '98-7654321',
-    communications: []
-  },
-]
+function toDbClient(client, userId) {
+  return {
+    id: client.id,
+    user_id: userId,
+    name: client.name,
+    email: client.email || null,
+    phone: client.phone || null,
+    type: client.type || 'personal',
+    status: client.status || 'not_started',
+    doc_status: client.docStatus || 'missing',
+    missing_docs: client.missingDocs || [],
+    received_docs: client.receivedDocs || [],
+    last_contact: client.lastContact || null,
+    notes: client.notes || null,
+    bank_info: client.bankInfo || null,
+    ssn_last4: client.ssn_last4 || null,
+    filing_status: client.filing_status || null,
+    address: client.address || null,
+    ein: client.ein || null,
+  }
+}
+
+function fromDbClient(row) {
+  return {
+    id: row.id,
+    name: row.name,
+    email: row.email,
+    phone: row.phone,
+    type: row.type,
+    status: row.status,
+    docStatus: row.doc_status,
+    missingDocs: row.missing_docs || [],
+    receivedDocs: row.received_docs || [],
+    lastContact: row.last_contact,
+    notes: row.notes,
+    bankInfo: row.bank_info,
+    ssn_last4: row.ssn_last4,
+    filing_status: row.filing_status,
+    address: row.address,
+    ein: row.ein,
+    communications: [],
+  }
+}
+
+function fromDbComm(row) {
+  return {
+    id: row.id,
+    date: row.date,
+    type: row.type,
+    direction: row.direction,
+    message: row.message,
+    status: row.status,
+  }
+}
 
 export function AppProvider({ children }) {
-  const [clients, setClients] = useState(initialClients)
+  const { user } = useAuth()
+  const [clients, setClients] = useState([])
   const [activeTab, setActiveTab] = useState('clients')
   const [selectedClient, setSelectedClient] = useState(null)
   const [clientSubTab, setClientSubTab] = useState('personal')
+  const [loadingData, setLoadingData] = useState(true)
 
-  const updateClient = useCallback((id, updates) => {
+  useEffect(() => {
+    if (!user) return
+    loadClients()
+  }, [user])
+
+  async function loadClients() {
+    setLoadingData(true)
+    const { data: clientRows, error: clientErr } = await supabase
+      .from('clients')
+      .select('*')
+      .order('created_at', { ascending: false })
+
+    if (clientErr) {
+      toast.error('Failed to load clients')
+      setLoadingData(false)
+      return
+    }
+
+    const { data: commRows, error: commErr } = await supabase
+      .from('communications')
+      .select('*')
+      .order('created_at', { ascending: false })
+
+    if (commErr) {
+      toast.error('Failed to load communications')
+    }
+
+    const mapped = (clientRows || []).map(row => {
+      const client = fromDbClient(row)
+      client.communications = (commRows || [])
+        .filter(c => c.client_id === row.id)
+        .map(fromDbComm)
+      return client
+    })
+
+    setClients(mapped)
+    setLoadingData(false)
+  }
+
+  const updateClient = useCallback(async (id, updates) => {
     setClients(prev => prev.map(c => c.id === id ? { ...c, ...updates } : c))
+
+    const dbUpdates = {}
+    if (updates.name !== undefined) dbUpdates.name = updates.name
+    if (updates.email !== undefined) dbUpdates.email = updates.email
+    if (updates.phone !== undefined) dbUpdates.phone = updates.phone
+    if (updates.type !== undefined) dbUpdates.type = updates.type
+    if (updates.status !== undefined) dbUpdates.status = updates.status
+    if (updates.docStatus !== undefined) dbUpdates.doc_status = updates.docStatus
+    if (updates.missingDocs !== undefined) dbUpdates.missing_docs = updates.missingDocs
+    if (updates.receivedDocs !== undefined) dbUpdates.received_docs = updates.receivedDocs
+    if (updates.lastContact !== undefined) dbUpdates.last_contact = updates.lastContact
+    if (updates.notes !== undefined) dbUpdates.notes = updates.notes
+    if (updates.bankInfo !== undefined) dbUpdates.bank_info = updates.bankInfo
+    if (updates.ssn_last4 !== undefined) dbUpdates.ssn_last4 = updates.ssn_last4
+    if (updates.filing_status !== undefined) dbUpdates.filing_status = updates.filing_status
+    if (updates.address !== undefined) dbUpdates.address = updates.address
+    if (updates.ein !== undefined) dbUpdates.ein = updates.ein
+
+    if (Object.keys(dbUpdates).length > 0) {
+      const { error } = await supabase.from('clients').update(dbUpdates).eq('id', id)
+      if (error) toast.error('Failed to save changes')
+    }
   }, [])
 
-  const addClient = useCallback((client) => {
-    setClients(prev => [...prev, { ...client, id: String(Date.now()), communications: [] }])
-  }, [])
+  const addClient = useCallback(async (client) => {
+    if (!user) return
 
-  const addCommunication = useCallback((clientId, comm) => {
+    const dbClient = toDbClient(client, user.id)
+    delete dbClient.id
+
+    const { data, error } = await supabase.from('clients').insert(dbClient).select().single()
+
+    if (error) {
+      toast.error('Failed to add client')
+      return
+    }
+
+    const newClient = fromDbClient(data)
+    newClient.communications = []
+    setClients(prev => [newClient, ...prev])
+    toast.success(`${newClient.name} added`)
+  }, [user])
+
+  const addCommunication = useCallback(async (clientId, comm) => {
+    if (!user) return
+
+    const dbComm = {
+      client_id: clientId,
+      user_id: user.id,
+      date: comm.date || new Date().toISOString().split('T')[0],
+      type: comm.type || 'email',
+      direction: comm.direction || 'outbound',
+      message: comm.message,
+      status: comm.status || 'delivered',
+    }
+
+    const { data, error } = await supabase.from('communications').insert(dbComm).select().single()
+
+    if (error) {
+      toast.error('Failed to save communication')
+      return
+    }
+
+    const newComm = fromDbComm(data)
+    const today = new Date().toISOString().split('T')[0]
+
     setClients(prev => prev.map(c => {
       if (c.id === clientId) {
-        return { ...c, communications: [comm, ...c.communications], lastContact: new Date().toISOString().split('T')[0] }
+        return { ...c, communications: [newComm, ...c.communications], lastContact: today }
       }
       return c
     }))
+
+    await supabase.from('clients').update({ last_contact: today }).eq('id', clientId)
+  }, [user])
+
+  const deleteClient = useCallback(async (id) => {
+    const { error } = await supabase.from('clients').delete().eq('id', id)
+    if (error) {
+      toast.error('Failed to delete client')
+      return
+    }
+    setClients(prev => prev.filter(c => c.id !== id))
+    toast.success('Client removed')
   }, [])
 
   const getClientsByType = useCallback((type) => {
@@ -130,11 +215,12 @@ export function AppProvider({ children }) {
 
   return (
     <AppContext.Provider value={{
-      clients, setClients, updateClient, addClient, addCommunication,
+      clients, setClients, updateClient, addClient, addCommunication, deleteClient,
       getClientsByType, getClientsByStatus, stats,
       activeTab, setActiveTab,
       selectedClient, setSelectedClient,
       clientSubTab, setClientSubTab,
+      loadingData,
     }}>
       {children}
     </AppContext.Provider>
