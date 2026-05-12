@@ -21,50 +21,104 @@ export default function OperationsTab() {
 
   const selected = clients.find(c => c.id === selectedId)
 
-  const handleQuickAction = (action) => {
-    if (!selected) return
+  const [sending, setSending] = useState(false)
+
+  const handleQuickAction = async (action) => {
+    if (!selected || sending) return
 
     let message = ''
+    let subject = ''
     switch (action) {
       case 'request_docs':
+        subject = 'Missing Documents for Your Tax Return'
         message = `Hi ${selected.name.split(' ')[0]}, we're missing the following documents for your tax return: ${selected.missingDocs.join(', ')}. Please upload them at your earliest convenience.`
         break
       case 'status_update':
+        subject = 'Tax Return Status Update'
         message = `Hi ${selected.name.split(' ')[0]}, just a quick update on your tax return. Current status: ${selected.status.replace(/_/g, ' ')}. We'll keep you posted on any changes.`
         break
       case 'request_bank':
+        subject = 'Bank Information Needed for Direct Deposit'
         message = `Hi ${selected.name.split(' ')[0]}, we need your bank account information for direct deposit of your refund. Please provide your routing and account numbers through your secure client portal.`
         break
       case 'ready_pickup':
+        subject = 'Your Tax Return is Ready!'
         message = `Hi ${selected.name.split(' ')[0]}, great news! Your tax return is ready. Please contact us to arrange pickup or we can mail it to you.`
         break
     }
 
-    addCommunication(selected.id, {
-      date: new Date().toISOString().split('T')[0],
-      type: 'email',
-      direction: 'outbound',
-      message,
-      status: 'delivered',
-    })
+    setSending(true)
+    try {
+      const res = await fetch('/api/send-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to: selected.email,
+          subject,
+          message,
+          clientName: selected.name,
+        }),
+      })
 
-    toast.success(`Message sent to ${selected.name}`)
+      const result = await res.json()
+
+      if (!res.ok) {
+        throw new Error(result.error || 'Failed to send')
+      }
+
+      addCommunication(selected.id, {
+        date: new Date().toISOString().split('T')[0],
+        type: 'email',
+        direction: 'outbound',
+        message,
+        status: 'delivered',
+      })
+
+      toast.success(`Email sent to ${selected.name}`)
+    } catch (err) {
+      toast.error(`Failed to send email: ${err.message}`)
+    }
+    setSending(false)
   }
 
-  const handleAiPrompt = () => {
-    if (!aiPrompt.trim() || !selected) return
+  const handleAiPrompt = async () => {
+    if (!aiPrompt.trim() || !selected || sending) return
 
-    // Simulate AI processing
-    addCommunication(selected.id, {
-      date: new Date().toISOString().split('T')[0],
-      type: 'email',
-      direction: 'outbound',
-      message: aiPrompt,
-      status: 'delivered',
-    })
-
-    toast.success(`AI processed: "${aiPrompt.slice(0, 50)}..."`)
+    const message = aiPrompt
     setAiPrompt('')
+    setSending(true)
+
+    try {
+      const res = await fetch('/api/send-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to: selected.email,
+          subject: `Message from Wolff Tax`,
+          message,
+          clientName: selected.name,
+        }),
+      })
+
+      const result = await res.json()
+
+      if (!res.ok) {
+        throw new Error(result.error || 'Failed to send')
+      }
+
+      addCommunication(selected.id, {
+        date: new Date().toISOString().split('T')[0],
+        type: 'email',
+        direction: 'outbound',
+        message,
+        status: 'delivered',
+      })
+
+      toast.success(`Email sent to ${selected.name}`)
+    } catch (err) {
+      toast.error(`Failed to send email: ${err.message}`)
+    }
+    setSending(false)
   }
 
   const toggleDoc = (doc, isReceived) => {
