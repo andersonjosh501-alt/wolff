@@ -287,7 +287,8 @@ export function AppProvider({ children }) {
       .upsert(row, { onConflict: 'user_id' })
 
     if (error) {
-      toast.error('Failed to save settings')
+      console.error('Onboarding save error:', error)
+      toast.error('Failed to save settings: ' + error.message)
       return
     }
 
