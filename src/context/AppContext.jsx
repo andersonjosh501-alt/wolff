@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useCallback, useEffect } from 'react'
-import { supabase } from '../lib/supabase'
+import { supabase, isDemoMode } from '../lib/supabase'
 import { useAuth } from './AuthContext'
+import { defaultEmailTemplates } from '../lib/emailTemplates'
 import toast from 'react-hot-toast'
 
 const AppContext = createContext({})
@@ -67,11 +68,48 @@ export function AppProvider({ children }) {
   const [selectedClient, setSelectedClient] = useState(null)
   const [clientSubTab, setClientSubTab] = useState('personal')
   const [loadingData, setLoadingData] = useState(true)
+  const [onboardingComplete, setOnboardingComplete] = useState(true) // default true, set false if new user
+  const [firmSettings, setFirmSettings] = useState({
+    firmName: 'Wolff',
+    firmEmail: '',
+    firmPhone: '',
+    preparerName: '',
+    emailTemplates: defaultEmailTemplates,
+  })
 
   useEffect(() => {
-    if (!user) return
+    if (!user || isDemoMode) {
+      // Demo mode — skip Supabase, show onboarding
+      setLoadingData(false)
+      setOnboardingComplete(false)
+      return
+    }
     loadClients()
+    loadOnboardingStatus()
   }, [user])
+
+  async function loadOnboardingStatus() {
+    const { data, error } = await supabase
+      .from('user_settings')
+      .select('*')
+      .eq('user_id', user.id)
+      .single()
+
+    if (error || !data) {
+      // No settings row means new user — show onboarding
+      setOnboardingComplete(false)
+      return
+    }
+
+    setOnboardingComplete(data.onboarding_complete || false)
+    setFirmSettings({
+      firmName: data.firm_name || 'Wolff',
+      firmEmail: data.firm_email || '',
+      firmPhone: data.firm_phone || '',
+      preparerName: data.preparer_name || '',
+      emailTemplates: { ...defaultEmailTemplates, ...(data.email_templates || {}) },
+    })
+  }
 
   async function loadClients() {
     setLoadingData(true)
@@ -127,14 +165,23 @@ export function AppProvider({ children }) {
     if (updates.address !== undefined) dbUpdates.address = updates.address
     if (updates.ein !== undefined) dbUpdates.ein = updates.ein
 
-    if (Object.keys(dbUpdates).length > 0) {
+    if (!isDemoMode && Object.keys(dbUpdates).length > 0) {
       const { error } = await supabase.from('clients').update(dbUpdates).eq('id', id)
       if (error) toast.error('Failed to save changes')
     }
   }, [])
 
   const addClient = useCallback(async (client) => {
-    if (!user) return
+    if (!user) {
+      // Demo mode — add locally without Supabase
+      const localClient = {
+        ...client,
+        id: String(Date.now()) + String(Math.random()).slice(2, 6),
+        communications: [],
+      }
+      setClients(prev => [localClient, ...prev])
+      return
+    }
 
     const dbClient = toDbClient(client, user.id)
     delete dbClient.id
@@ -153,27 +200,34 @@ export function AppProvider({ children }) {
   }, [user])
 
   const addCommunication = useCallback(async (clientId, comm) => {
-    if (!user) return
-
-    const dbComm = {
-      client_id: clientId,
-      user_id: user.id,
-      date: comm.date || new Date().toISOString().split('T')[0],
+    const today = new Date().toISOString().split('T')[0]
+    const newComm = {
+      id: String(Date.now()),
+      date: comm.date || today,
       type: comm.type || 'email',
       direction: comm.direction || 'outbound',
       message: comm.message,
       status: comm.status || 'delivered',
     }
 
-    const { data, error } = await supabase.from('communications').insert(dbComm).select().single()
+    if (!isDemoMode && user) {
+      const dbComm = {
+        client_id: clientId,
+        user_id: user.id,
+        ...newComm,
+      }
+      delete dbComm.id
 
-    if (error) {
-      toast.error('Failed to save communication')
-      return
+      const { data, error } = await supabase.from('communications').insert(dbComm).select().single()
+
+      if (error) {
+        toast.error('Failed to save communication')
+        return
+      }
+
+      newComm.id = data.id
+      await supabase.from('clients').update({ last_contact: today }).eq('id', clientId)
     }
-
-    const newComm = fromDbComm(data)
-    const today = new Date().toISOString().split('T')[0]
 
     setClients(prev => prev.map(c => {
       if (c.id === clientId) {
@@ -181,15 +235,73 @@ export function AppProvider({ children }) {
       }
       return c
     }))
+  }, [user])
 
-    await supabase.from('clients').update({ last_contact: today }).eq('id', clientId)
+  const updateFirmSettings = useCallback(async (updates) => {
+    const merged = { ...firmSettings, ...updates }
+    setFirmSettings(merged)
+
+    if (!isDemoMode && user) {
+      const dbRow = {}
+      if (updates.firmName !== undefined) dbRow.firm_name = updates.firmName
+      if (updates.firmEmail !== undefined) dbRow.firm_email = updates.firmEmail
+      if (updates.firmPhone !== undefined) dbRow.firm_phone = updates.firmPhone
+      if (updates.preparerName !== undefined) dbRow.preparer_name = updates.preparerName
+      if (updates.emailTemplates !== undefined) dbRow.email_templates = updates.emailTemplates
+
+      if (Object.keys(dbRow).length > 0) {
+        const { error } = await supabase
+          .from('user_settings')
+          .update(dbRow)
+          .eq('user_id', user.id)
+
+        if (error) {
+          toast.error('Failed to save settings')
+          return
+        }
+      }
+    }
+
+    toast.success('Settings saved')
+  }, [user, firmSettings])
+
+  const completeOnboarding = useCallback(async (settings) => {
+    if (!user) {
+      // Demo mode — just set local state
+      setOnboardingComplete(true)
+      setFirmSettings(settings)
+      return
+    }
+
+    const row = {
+      user_id: user.id,
+      onboarding_complete: true,
+      firm_name: settings.firmName || null,
+      firm_email: settings.firmEmail || null,
+      firm_phone: settings.firmPhone || null,
+      email_templates: settings.emailTemplates || null,
+    }
+
+    const { error } = await supabase
+      .from('user_settings')
+      .upsert(row, { onConflict: 'user_id' })
+
+    if (error) {
+      toast.error('Failed to save settings')
+      return
+    }
+
+    setOnboardingComplete(true)
+    setFirmSettings(settings)
   }, [user])
 
   const deleteClient = useCallback(async (id) => {
-    const { error } = await supabase.from('clients').delete().eq('id', id)
-    if (error) {
-      toast.error('Failed to delete client')
-      return
+    if (!isDemoMode) {
+      const { error } = await supabase.from('clients').delete().eq('id', id)
+      if (error) {
+        toast.error('Failed to delete client')
+        return
+      }
     }
     setClients(prev => prev.filter(c => c.id !== id))
     toast.success('Client removed')
@@ -221,6 +333,7 @@ export function AppProvider({ children }) {
       selectedClient, setSelectedClient,
       clientSubTab, setClientSubTab,
       loadingData,
+      onboardingComplete, completeOnboarding, firmSettings, updateFirmSettings,
     }}>
       {children}
     </AppContext.Provider>

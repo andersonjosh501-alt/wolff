@@ -4,10 +4,11 @@ import StatusBadge from '../common/StatusBadge'
 import DocIndicator from '../common/DocIndicator'
 import { Check, X, Send, MessageSquare, Phone, Mail, FileText, Zap, ChevronRight } from 'lucide-react'
 import { format, parseISO, differenceInDays } from 'date-fns'
+import { interpolateTemplate } from '../../lib/emailTemplates'
 import toast from 'react-hot-toast'
 
 export default function OperationsTab() {
-  const { clients, updateClient, addCommunication, setActiveTab, setSelectedClient } = useApp()
+  const { clients, updateClient, addCommunication, setActiveTab, setSelectedClient, firmSettings } = useApp()
   const [selectedId, setSelectedId] = useState(null)
   const [aiPrompt, setAiPrompt] = useState('')
 
@@ -26,26 +27,24 @@ export default function OperationsTab() {
   const handleQuickAction = async (action) => {
     if (!selected || sending) return
 
-    let message = ''
-    let subject = ''
-    switch (action) {
-      case 'request_docs':
-        subject = 'Missing Documents for Your Tax Return'
-        message = `Hi ${selected.name.split(' ')[0]}, we're missing the following documents for your tax return: ${selected.missingDocs.join(', ')}. Please upload them at your earliest convenience.`
-        break
-      case 'status_update':
-        subject = 'Tax Return Status Update'
-        message = `Hi ${selected.name.split(' ')[0]}, just a quick update on your tax return. Current status: ${selected.status.replace(/_/g, ' ')}. We'll keep you posted on any changes.`
-        break
-      case 'request_bank':
-        subject = 'Bank Information Needed for Direct Deposit'
-        message = `Hi ${selected.name.split(' ')[0]}, we need your bank account information for direct deposit of your refund. Please provide your routing and account numbers through your secure client portal.`
-        break
-      case 'ready_pickup':
-        subject = 'Your Tax Return is Ready!'
-        message = `Hi ${selected.name.split(' ')[0]}, great news! Your tax return is ready. Please contact us to arrange pickup or we can mail it to you.`
-        break
+    const templates = firmSettings?.emailTemplates || {}
+    const templateKey = action === 'request_docs' ? 'request_docs'
+      : action === 'status_update' ? 'status_update'
+      : action === 'request_bank' ? 'request_bank'
+      : 'ready_pickup'
+
+    const template = templates[templateKey]
+    const vars = {
+      clientName: selected.name.split(' ')[0],
+      firmName: firmSettings?.firmName || 'Wolff',
+      preparerName: firmSettings?.preparerName || firmSettings?.firmName || 'Wolff',
+      documentList: selected.missingDocs.length > 0
+        ? selected.missingDocs.map(d => `  - ${d}`).join('\n')
+        : '  (none)',
     }
+
+    const subject = template ? interpolateTemplate(template.subject, vars) : `Message from ${vars.firmName}`
+    const message = template ? interpolateTemplate(template.body, vars) : `Hi ${vars.clientName}, please contact us regarding your tax return.`
 
     setSending(true)
     try {
@@ -57,6 +56,7 @@ export default function OperationsTab() {
           subject,
           message,
           clientName: selected.name,
+          firmName: firmSettings?.firmName || 'Wolff',
         }),
       })
 
@@ -94,9 +94,10 @@ export default function OperationsTab() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           to: selected.email,
-          subject: `Message from Wolff Tax`,
+          subject: `Message from ${firmSettings?.firmName || 'Wolff'}`,
           message,
           clientName: selected.name,
+          firmName: firmSettings?.firmName || 'Wolff',
         }),
       })
 

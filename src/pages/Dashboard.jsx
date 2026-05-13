@@ -4,9 +4,10 @@ import ClientsTab from '../components/clients/ClientsTab'
 import OperationsTab from '../components/operations/OperationsTab'
 import StatusTab from '../components/status/StatusTab'
 import SettingsTab from '../components/settings/SettingsTab'
+import WelcomeOnboarding from '../components/onboarding/WelcomeOnboarding'
 
 export default function Dashboard() {
-  const { activeTab, loadingData } = useApp()
+  const { activeTab, loadingData, onboardingComplete, clients } = useApp()
 
   const renderTab = () => {
     switch (activeTab) {
@@ -27,6 +28,11 @@ export default function Dashboard() {
         </main>
       </div>
     )
+  }
+
+  // Show onboarding for new users with no clients
+  if (!onboardingComplete && clients.length === 0) {
+    return <WelcomeOnboarding />
   }
 
   return (

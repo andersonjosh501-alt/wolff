@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect } from 'react'
-import { supabase } from '../lib/supabase'
+import { supabase, isDemoMode } from '../lib/supabase'
 
 const AuthContext = createContext({})
 
@@ -8,6 +8,12 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    if (isDemoMode) {
+      // No Supabase configured — skip auth checks
+      setLoading(false)
+      return
+    }
+
     supabase.auth.getSession().then(({ data: { session } }) => {
       setUser(session?.user ?? null)
       setLoading(false)
@@ -21,7 +27,9 @@ export function AuthProvider({ children }) {
   }, [])
 
   const signOut = async () => {
-    await supabase.auth.signOut()
+    if (!isDemoMode && supabase) {
+      await supabase.auth.signOut()
+    }
     setUser(null)
   }
 

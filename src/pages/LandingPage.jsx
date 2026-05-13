@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { supabase } from '../lib/supabase'
+import { supabase, isDemoMode } from '../lib/supabase'
 import { ArrowRight, Shield, Zap, Users, Mail, Lock, Eye, EyeOff } from 'lucide-react'
 
 export default function LandingPage({ onDemoLogin }) {
@@ -15,6 +15,11 @@ export default function LandingPage({ onDemoLogin }) {
     e.preventDefault()
     setError('')
     setLoading(true)
+    if (isDemoMode || !supabase) {
+      setError('Connect Supabase to enable authentication. Use Demo mode instead.')
+      setLoading(false)
+      return
+    }
     try {
       const { error: authError } = isSignUp
         ? await supabase.auth.signUp({ email, password })
@@ -27,6 +32,7 @@ export default function LandingPage({ onDemoLogin }) {
   }
 
   const handleGoogleAuth = async () => {
+    if (isDemoMode || !supabase) return
     await supabase.auth.signInWithOAuth({ provider: 'google' })
   }
 

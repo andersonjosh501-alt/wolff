@@ -15,14 +15,17 @@ export default async function handler(req, res) {
   const resend = new Resend(process.env.RESEND_API_KEY)
 
   try {
-    const { to, subject, message, clientName } = req.body
+    const { to, subject, message, clientName, firmName } = req.body
 
     if (!to || !subject || !message) {
       return res.status(400).json({ error: 'Missing required fields: to, subject, message' })
     }
 
+    // Use firm name from settings, fallback to "Wolff"
+    const senderName = firmName || 'Wolff'
+
     const { data, error } = await resend.emails.send({
-      from: 'Wolff Tax <noreply@wolffhq.com>',
+      from: `${senderName} <noreply@wolffhq.com>`,
       to: [to],
       subject,
       html: `
@@ -30,9 +33,9 @@ export default async function handler(req, res) {
           <div style="margin-bottom: 32px;">
             <div style="display: inline-flex; align-items: center; gap: 8px;">
               <div style="width: 32px; height: 32px; background-color: #6b8f71; border-radius: 8px; display: flex; align-items: center; justify-content: center;">
-                <span style="color: white; font-weight: bold; font-size: 14px;">W</span>
+                <span style="color: white; font-weight: bold; font-size: 14px;">${senderName.charAt(0).toUpperCase()}</span>
               </div>
-              <span style="font-size: 18px; font-weight: 600; color: #1a1a1a;">Wolff</span>
+              <span style="font-size: 18px; font-weight: 600; color: #1a1a1a;">${senderName}</span>
             </div>
           </div>
           <div style="color: #374151; font-size: 15px; line-height: 1.7;">
@@ -40,7 +43,7 @@ export default async function handler(req, res) {
           </div>
           <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 32px 0;" />
           <p style="color: #9ca3af; font-size: 12px;">
-            This email was sent by Wolff Tax Preparation. If you have questions, reply directly to this email.
+            This email was sent by ${senderName}. If you have questions, reply directly to this email.
           </p>
         </div>
       `,
