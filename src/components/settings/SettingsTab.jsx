@@ -42,6 +42,7 @@ export default function SettingsTab() {
   const [updateFreq, setUpdateFreq] = useState('weekly')
 
   const handleSaveFirm = () => {
+    console.log('[Wolff Settings] Saving firm info:', { firmName, firmEmail, firmPhone, preparerName })
     updateFirmSettings({ firmName, firmEmail, firmPhone, preparerName })
   }
 
@@ -55,6 +56,8 @@ export default function SettingsTab() {
   }
 
   const handleSaveTemplates = () => {
+    console.log('[Wolff Settings] Saving templates:', Object.keys(templates))
+    console.log('[Wolff Settings] Template data:', templates)
     updateFirmSettings({ emailTemplates: templates })
     setTemplatesDirty(false)
   }

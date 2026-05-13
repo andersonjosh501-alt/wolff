@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useApp } from '../../context/AppContext'
+import { defaultEmailTemplates } from '../../lib/emailTemplates'
 import { Building, UserPlus, Mail, ArrowRight, ArrowLeft, Check, Upload, Plus, X, FileText, Sparkles } from 'lucide-react'
 import Papa from 'papaparse'
 import toast from 'react-hot-toast'
@@ -10,41 +11,24 @@ const steps = [
   { id: 'templates', label: 'Email Templates', icon: Mail },
 ]
 
-const defaultTemplates = [
-  {
-    id: 'missing_docs',
-    name: 'Request Missing Documents',
-    subject: 'Missing Documents for Your Tax Return',
-    body: `Hi {{first_name}},\n\nWe're preparing your tax return and are missing the following documents:\n\n{{missing_docs}}\n\nPlease upload them through your client portal or reply to this email with the documents attached.\n\nThank you,\n{{firm_name}}`,
-  },
-  {
-    id: 'status_update',
-    name: 'Status Update',
-    subject: 'Tax Return Status Update',
-    body: `Hi {{first_name}},\n\nJust a quick update on your tax return.\n\nCurrent status: {{status}}\n\nWe'll keep you posted on any changes. Don't hesitate to reach out if you have questions.\n\nBest,\n{{firm_name}}`,
-  },
-  {
-    id: 'welcome',
-    name: 'New Client Welcome',
-    subject: 'Welcome to {{firm_name}}!',
-    body: `Hi {{first_name}},\n\nWelcome! We're excited to work with you this tax season.\n\nTo get started, please upload your tax documents through your secure client portal:\n{{portal_link}}\n\nIf you have any questions, feel free to reach out.\n\nBest regards,\n{{firm_name}}`,
-  },
-  {
-    id: 'ready_pickup',
-    name: 'Return Ready for Pickup',
-    subject: 'Your Tax Return is Ready!',
-    body: `Hi {{first_name}},\n\nGreat news — your tax return is complete and ready for pickup!\n\nPlease contact us to arrange a time, or let us know if you'd like us to mail it.\n\nThank you for choosing {{firm_name}}.\n\nBest,\n{{firm_name}}`,
-  },
-]
-
 export default function WelcomeOnboarding() {
-  const { addClient, completeOnboarding } = useApp()
+  const { addClient, completeOnboarding, saveFirmDraft, firmSettings } = useApp()
   const [currentStep, setCurrentStep] = useState(0)
 
-  // Step 1: Firm setup
+  // Step 1: Firm setup — hydrate from firmSettings (loaded from Supabase)
   const [firmName, setFirmName] = useState('')
   const [firmEmail, setFirmEmail] = useState('')
   const [firmPhone, setFirmPhone] = useState('')
+
+  // Hydrate form from Supabase data on mount
+  useEffect(() => {
+    if (firmSettings) {
+      console.log('[Wolff Onboarding] Hydrating form from firmSettings:', firmSettings)
+      if (firmSettings.firmName && firmSettings.firmName !== 'Wolff') setFirmName(firmSettings.firmName)
+      if (firmSettings.firmEmail) setFirmEmail(firmSettings.firmEmail)
+      if (firmSettings.firmPhone) setFirmPhone(firmSettings.firmPhone)
+    }
+  }, [firmSettings])
 
   // Step 2: Add clients
   const [addMethod, setAddMethod] = useState(null) // 'manual' | 'import'
@@ -52,8 +36,14 @@ export default function WelcomeOnboarding() {
   const [addedClients, setAddedClients] = useState([])
   const [importedData, setImportedData] = useState(null)
 
-  // Step 3: Templates
-  const [templates, setTemplates] = useState(defaultTemplates)
+  // Step 3: Templates — use the same keyed-object format as Settings
+  const [templates, setTemplates] = useState(() => {
+    // If firmSettings already has templates from Supabase, use those
+    if (firmSettings?.emailTemplates && Object.keys(firmSettings.emailTemplates).length > 0) {
+      return { ...defaultEmailTemplates, ...firmSettings.emailTemplates }
+    }
+    return { ...defaultEmailTemplates }
+  })
   const [editingTemplate, setEditingTemplate] = useState(null)
 
   const canProceed = () => {
@@ -61,7 +51,12 @@ export default function WelcomeOnboarding() {
     return true // steps 2 & 3 are optional
   }
 
-  const handleNext = () => {
+  const handleNext = async () => {
+    // Save firm info to Supabase when leaving step 1
+    if (currentStep === 0 && firmName.trim()) {
+      console.log('[Wolff Onboarding] Saving firm draft on Continue:', { firmName, firmEmail, firmPhone })
+      await saveFirmDraft({ firmName, firmEmail, firmPhone })
+    }
     if (currentStep < steps.length - 1) {
       setCurrentStep(currentStep + 1)
     }
@@ -73,14 +68,24 @@ export default function WelcomeOnboarding() {
     }
   }
 
+  // Save firm info on blur for each field
+  const handleFirmBlur = () => {
+    if (firmName.trim()) {
+      console.log('[Wolff Onboarding] Saving firm draft on blur:', { firmName, firmEmail, firmPhone })
+      saveFirmDraft({ firmName, firmEmail, firmPhone })
+    }
+  }
+
   const handleFinish = async () => {
-    // Save firm settings to Supabase
-    await completeOnboarding({
+    const settings = {
       firmName,
       firmEmail,
       firmPhone,
+      preparerName: firmSettings?.preparerName || '',
       emailTemplates: templates,
-    })
+    }
+    console.log('[Wolff Onboarding] Finishing setup with:', settings)
+    await completeOnboarding(settings)
     toast.success('Welcome to Wolff! Your firm is set up.')
   }
 
@@ -151,8 +156,11 @@ export default function WelcomeOnboarding() {
     toast.success(`Imported ${count} clients`)
   }
 
-  const updateTemplate = (id, field, value) => {
-    setTemplates(prev => prev.map(t => t.id === id ? { ...t, [field]: value } : t))
+  const updateTemplate = (key, field, value) => {
+    setTemplates(prev => ({
+      ...prev,
+      [key]: { ...prev[key], [field]: value },
+    }))
   }
 
   return (
@@ -213,6 +221,7 @@ export default function WelcomeOnboarding() {
                     type="text"
                     value={firmName}
                     onChange={(e) => setFirmName(e.target.value)}
+                    onBlur={handleFirmBlur}
                     placeholder="e.g., Springfield Tax Services"
                     className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sage-300 focus:border-sage-400"
                   />
@@ -224,6 +233,7 @@ export default function WelcomeOnboarding() {
                       type="email"
                       value={firmEmail}
                       onChange={(e) => setFirmEmail(e.target.value)}
+                      onBlur={handleFirmBlur}
                       placeholder="contact@yourfirm.com"
                       className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sage-300 focus:border-sage-400"
                     />
@@ -234,6 +244,7 @@ export default function WelcomeOnboarding() {
                       type="tel"
                       value={firmPhone}
                       onChange={(e) => setFirmPhone(e.target.value)}
+                      onBlur={handleFirmBlur}
                       placeholder="(555) 000-0000"
                       className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sage-300 focus:border-sage-400"
                     />
@@ -413,7 +424,7 @@ export default function WelcomeOnboarding() {
             </div>
           )}
 
-          {/* Step 3: Email Templates */}
+          {/* Step 3: Email Templates — uses same keyed format as Settings */}
           {currentStep === 2 && (
             <div>
               <div className="flex items-center gap-3 mb-6">
@@ -427,27 +438,27 @@ export default function WelcomeOnboarding() {
               </div>
 
               <div className="space-y-3">
-                {templates.map((template) => (
-                  <div key={template.id} className="border border-gray-200 rounded-xl overflow-hidden">
+                {Object.entries(templates).map(([key, template]) => (
+                  <div key={key} className="border border-gray-200 rounded-xl overflow-hidden">
                     <button
-                      onClick={() => setEditingTemplate(editingTemplate === template.id ? null : template.id)}
+                      onClick={() => setEditingTemplate(editingTemplate === key ? null : key)}
                       className="w-full flex items-center justify-between p-4 hover:bg-gray-50 transition-colors text-left"
                     >
                       <div className="flex items-center gap-3">
                         <Mail size={14} className="text-sage-500" />
                         <span className="text-sm font-medium text-gray-900">{template.name}</span>
                       </div>
-                      <span className="text-xs text-gray-400">{editingTemplate === template.id ? 'Collapse' : 'Edit'}</span>
+                      <span className="text-xs text-gray-400">{editingTemplate === key ? 'Collapse' : 'Edit'}</span>
                     </button>
 
-                    {editingTemplate === template.id && (
+                    {editingTemplate === key && (
                       <div className="px-4 pb-4 space-y-3">
                         <div>
                           <label className="block text-xs font-medium text-gray-600 mb-1">Subject Line</label>
                           <input
                             type="text"
                             value={template.subject}
-                            onChange={(e) => updateTemplate(template.id, 'subject', e.target.value)}
+                            onChange={(e) => updateTemplate(key, 'subject', e.target.value)}
                             className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-sage-300"
                           />
                         </div>
@@ -455,13 +466,13 @@ export default function WelcomeOnboarding() {
                           <label className="block text-xs font-medium text-gray-600 mb-1">Body</label>
                           <textarea
                             value={template.body}
-                            onChange={(e) => updateTemplate(template.id, 'body', e.target.value)}
+                            onChange={(e) => updateTemplate(key, 'body', e.target.value)}
                             rows={6}
                             className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-sage-300 resize-none font-mono text-xs leading-relaxed"
                           />
                         </div>
                         <div className="flex flex-wrap gap-2">
-                          {['{{first_name}}', '{{firm_name}}', '{{status}}', '{{missing_docs}}', '{{portal_link}}'].map(tag => (
+                          {['{client_name}', '{firm_name}', '{preparer_name}', '{document_list}'].map(tag => (
                             <span key={tag} className="px-2 py-0.5 bg-sage-50 text-sage-600 rounded text-xs font-mono">{tag}</span>
                           ))}
                         </div>
@@ -489,7 +500,11 @@ export default function WelcomeOnboarding() {
           <div className="flex items-center gap-3">
             {currentStep < steps.length - 1 && (
               <button
-                onClick={() => {
+                onClick={async () => {
+                  // Save firm draft before skipping
+                  if (currentStep === 0 && firmName.trim()) {
+                    await saveFirmDraft({ firmName, firmEmail, firmPhone })
+                  }
                   setCurrentStep(steps.length - 1)
                 }}
                 className="px-4 py-2.5 text-sm text-gray-400 hover:text-gray-600 transition-colors"

@@ -64,7 +64,15 @@ function fromDbComm(row) {
 export function AppProvider({ children }) {
   const { user } = useAuth()
   const [clients, setClients] = useState([])
-  const [activeTab, setActiveTab] = useState('clients')
+  // Persist activeTab to localStorage so Settings survives refresh
+  const [activeTab, setActiveTabState] = useState(() => {
+    try { return localStorage.getItem('wolff_activeTab') || 'clients' } catch { return 'clients' }
+  })
+  const setActiveTab = useCallback((tab) => {
+    setActiveTabState(tab)
+    try { localStorage.setItem('wolff_activeTab', tab) } catch {}
+  }, [])
+
   const [selectedClient, setSelectedClient] = useState(null)
   const [clientSubTab, setClientSubTab] = useState('personal')
   const [loadingData, setLoadingData] = useState(true)
@@ -89,6 +97,7 @@ export function AppProvider({ children }) {
   }, [user])
 
   async function loadOnboardingStatus() {
+    console.log('[Wolff DB] READ user_settings for user:', user.id)
     const { data, error } = await supabase
       .from('user_settings')
       .select('*')
@@ -96,10 +105,21 @@ export function AppProvider({ children }) {
       .single()
 
     if (error || !data) {
+      console.log('[Wolff DB] No user_settings row found — new user, showing onboarding', error)
       // No settings row means new user — show onboarding
       setOnboardingComplete(false)
       return
     }
+
+    console.log('[Wolff DB] Loaded user_settings:', {
+      onboarding_complete: data.onboarding_complete,
+      firm_name: data.firm_name,
+      firm_email: data.firm_email,
+      firm_phone: data.firm_phone,
+      preparer_name: data.preparer_name,
+      has_templates: !!data.email_templates,
+      template_keys: data.email_templates ? Object.keys(data.email_templates) : [],
+    })
 
     setOnboardingComplete(data.onboarding_complete || false)
     setFirmSettings({
@@ -237,33 +257,69 @@ export function AppProvider({ children }) {
     }))
   }, [user])
 
+  // Save firm settings — uses upsert so it works whether or not a row exists
   const updateFirmSettings = useCallback(async (updates) => {
     const merged = { ...firmSettings, ...updates }
     setFirmSettings(merged)
 
     if (!isDemoMode && user) {
-      const dbRow = {}
+      const dbRow = {
+        user_id: user.id,
+        onboarding_complete: true, // if they're in settings, onboarding is done
+      }
       if (updates.firmName !== undefined) dbRow.firm_name = updates.firmName
       if (updates.firmEmail !== undefined) dbRow.firm_email = updates.firmEmail
       if (updates.firmPhone !== undefined) dbRow.firm_phone = updates.firmPhone
       if (updates.preparerName !== undefined) dbRow.preparer_name = updates.preparerName
       if (updates.emailTemplates !== undefined) dbRow.email_templates = updates.emailTemplates
 
-      if (Object.keys(dbRow).length > 0) {
-        const { error } = await supabase
-          .from('user_settings')
-          .update(dbRow)
-          .eq('user_id', user.id)
+      console.log('[Wolff DB] WRITE updateFirmSettings — upserting user_settings:', dbRow)
 
-        if (error) {
-          toast.error('Failed to save settings')
-          return
-        }
+      const { data, error } = await supabase
+        .from('user_settings')
+        .upsert(dbRow, { onConflict: 'user_id' })
+        .select()
+
+      if (error) {
+        console.error('[Wolff DB] updateFirmSettings FAILED:', error)
+        toast.error('Failed to save settings: ' + error.message)
+        return
       }
+
+      console.log('[Wolff DB] updateFirmSettings SUCCESS:', data)
     }
 
     toast.success('Settings saved')
   }, [user, firmSettings])
+
+  // Save partial firm info during onboarding (before "Finish Setup")
+  const saveFirmDraft = useCallback(async (draft) => {
+    if (!user || isDemoMode) return
+
+    const dbRow = {
+      user_id: user.id,
+      onboarding_complete: false, // still in onboarding
+    }
+    if (draft.firmName !== undefined) dbRow.firm_name = draft.firmName
+    if (draft.firmEmail !== undefined) dbRow.firm_email = draft.firmEmail
+    if (draft.firmPhone !== undefined) dbRow.firm_phone = draft.firmPhone
+    if (draft.preparerName !== undefined) dbRow.preparer_name = draft.preparerName
+
+    console.log('[Wolff DB] WRITE saveFirmDraft — upserting partial settings:', dbRow)
+
+    const { data, error } = await supabase
+      .from('user_settings')
+      .upsert(dbRow, { onConflict: 'user_id' })
+      .select()
+
+    if (error) {
+      console.error('[Wolff DB] saveFirmDraft FAILED:', error)
+    } else {
+      console.log('[Wolff DB] saveFirmDraft SUCCESS:', data)
+      // Update local state with saved values
+      setFirmSettings(prev => ({ ...prev, ...draft }))
+    }
+  }, [user])
 
   const completeOnboarding = useCallback(async (settings) => {
     if (!user) {
@@ -279,18 +335,24 @@ export function AppProvider({ children }) {
       firm_name: settings.firmName || null,
       firm_email: settings.firmEmail || null,
       firm_phone: settings.firmPhone || null,
+      preparer_name: settings.preparerName || null,
       email_templates: settings.emailTemplates || null,
     }
 
-    const { error } = await supabase
+    console.log('[Wolff DB] WRITE completeOnboarding — upserting:', row)
+
+    const { data, error } = await supabase
       .from('user_settings')
       .upsert(row, { onConflict: 'user_id' })
+      .select()
 
     if (error) {
-      console.error('Onboarding save error:', error)
+      console.error('[Wolff DB] completeOnboarding FAILED:', error)
       toast.error('Failed to save settings: ' + error.message)
       return
     }
+
+    console.log('[Wolff DB] completeOnboarding SUCCESS:', data)
 
     setOnboardingComplete(true)
     setFirmSettings(settings)
@@ -334,7 +396,7 @@ export function AppProvider({ children }) {
       selectedClient, setSelectedClient,
       clientSubTab, setClientSubTab,
       loadingData,
-      onboardingComplete, completeOnboarding, firmSettings, updateFirmSettings,
+      onboardingComplete, completeOnboarding, saveFirmDraft, firmSettings, updateFirmSettings,
     }}>
       {children}
     </AppContext.Provider>
