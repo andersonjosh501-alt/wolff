@@ -25,6 +25,7 @@ function toDbClient(client, userId) {
     filing_status: client.filing_status || null,
     address: client.address || null,
     ein: client.ein || null,
+    prior_year_filed: client.priorYearFiled || false,
   }
 }
 
@@ -46,6 +47,7 @@ function fromDbClient(row) {
     filing_status: row.filing_status,
     address: row.address,
     ein: row.ein,
+    priorYearFiled: row.prior_year_filed || false,
     communications: [],
   }
 }
@@ -184,6 +186,7 @@ export function AppProvider({ children }) {
     if (updates.filing_status !== undefined) dbUpdates.filing_status = updates.filing_status
     if (updates.address !== undefined) dbUpdates.address = updates.address
     if (updates.ein !== undefined) dbUpdates.ein = updates.ein
+    if (updates.priorYearFiled !== undefined) dbUpdates.prior_year_filed = updates.priorYearFiled
 
     if (!isDemoMode && Object.keys(dbUpdates).length > 0) {
       const { error } = await supabase.from('clients').update(dbUpdates).eq('id', id)
@@ -218,6 +221,86 @@ export function AppProvider({ children }) {
     setClients(prev => [newClient, ...prev])
     toast.success(`${newClient.name} added`)
   }, [user])
+
+  // Bulk import clients — returns { imported, skippedMissing, skippedDuplicate }
+  const bulkImportClients = useCallback(async (clientRows) => {
+    const results = { imported: 0, skippedMissing: 0, skippedDuplicate: 0 }
+
+    // Filter rows missing name or email
+    const valid = []
+    for (const row of clientRows) {
+      if (!row.name?.trim() || !row.email?.trim()) {
+        results.skippedMissing++
+        continue
+      }
+      valid.push(row)
+    }
+
+    if (valid.length === 0) return results
+
+    if (!user || isDemoMode) {
+      // Demo mode — add locally, check for duplicate emails
+      const existingEmails = new Set(clients.map(c => c.email?.toLowerCase()))
+      const toAdd = []
+      for (const row of valid) {
+        if (existingEmails.has(row.email.toLowerCase())) {
+          results.skippedDuplicate++
+          continue
+        }
+        existingEmails.add(row.email.toLowerCase())
+        toAdd.push({
+          ...row,
+          id: String(Date.now()) + String(Math.random()).slice(2, 6),
+          communications: [],
+        })
+        results.imported++
+      }
+      setClients(prev => [...toAdd, ...prev])
+      return results
+    }
+
+    // Production — check existing emails for dedup
+    const existingEmails = new Set(clients.map(c => c.email?.toLowerCase()))
+
+    const dbRows = []
+    for (const row of valid) {
+      if (existingEmails.has(row.email.toLowerCase())) {
+        results.skippedDuplicate++
+        continue
+      }
+      existingEmails.add(row.email.toLowerCase())
+      const dbClient = toDbClient(row, user.id)
+      delete dbClient.id
+      dbRows.push(dbClient)
+    }
+
+    if (dbRows.length === 0) return results
+
+    console.log('[Wolff DB] WRITE bulkImportClients — inserting', dbRows.length, 'rows')
+
+    const { data, error } = await supabase
+      .from('clients')
+      .insert(dbRows)
+      .select()
+
+    console.log('[Wolff DB] bulkImportClients response:', { data, error })
+
+    if (error) {
+      console.error('[Wolff DB] bulkImportClients FAILED:', error)
+      toast.error('Import failed: ' + error.message)
+      return results
+    }
+
+    const newClients = (data || []).map(row => {
+      const c = fromDbClient(row)
+      c.communications = []
+      return c
+    })
+
+    results.imported = newClients.length
+    setClients(prev => [...newClients, ...prev])
+    return results
+  }, [user, clients])
 
   const addCommunication = useCallback(async (clientId, comm) => {
     const today = new Date().toISOString().split('T')[0]
@@ -390,7 +473,7 @@ export function AppProvider({ children }) {
 
   return (
     <AppContext.Provider value={{
-      clients, setClients, updateClient, addClient, addCommunication, deleteClient,
+      clients, setClients, updateClient, addClient, bulkImportClients, addCommunication, deleteClient,
       getClientsByType, getClientsByStatus, stats,
       activeTab, setActiveTab,
       selectedClient, setSelectedClient,

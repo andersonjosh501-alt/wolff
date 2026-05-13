@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react'
 import { useApp } from '../../context/AppContext'
 import { defaultEmailTemplates } from '../../lib/emailTemplates'
+import ImportModal from '../clients/ImportModal'
 import { Building, UserPlus, Mail, ArrowRight, ArrowLeft, Check, Upload, Plus, X, FileText, Sparkles } from 'lucide-react'
-import Papa from 'papaparse'
 import toast from 'react-hot-toast'
 
 const steps = [
@@ -34,7 +34,7 @@ export default function WelcomeOnboarding() {
   const [addMethod, setAddMethod] = useState(null) // 'manual' | 'import'
   const [manualClient, setManualClient] = useState({ name: '', email: '', phone: '', type: 'personal' })
   const [addedClients, setAddedClients] = useState([])
-  const [importedData, setImportedData] = useState(null)
+  const [showImportModal, setShowImportModal] = useState(false)
 
   // Step 3: Templates — use the same keyed-object format as Settings
   const [templates, setTemplates] = useState(() => {
@@ -111,49 +111,6 @@ export default function WelcomeOnboarding() {
 
     setAddedClients(prev => [...prev, { name: manualClient.name, email: manualClient.email }])
     setManualClient({ name: '', email: '', phone: '', type: 'personal' })
-  }
-
-  const handleImportFile = (file) => {
-    if (!file) return
-    Papa.parse(file, {
-      header: true,
-      skipEmptyLines: true,
-      complete: (results) => {
-        setImportedData(results.data)
-      },
-      error: () => {
-        toast.error('Failed to parse CSV file')
-      },
-    })
-  }
-
-  const handleImportConfirm = async () => {
-    if (!importedData) return
-    let count = 0
-    for (const row of importedData) {
-      if (row.name || row.Name) {
-        await addClient({
-          name: row.name || row.Name || '',
-          email: row.email || row.Email || '',
-          phone: row.phone || row.Phone || '',
-          address: row.address || row.Address || '',
-          type: (row.type || row.Type || 'personal').toLowerCase(),
-          filing_status: row.filing_status || row['Filing Status'] || 'Single',
-          notes: row.notes || row.Notes || '',
-          status: 'not_started',
-          docStatus: 'missing',
-          missingDocs: [],
-          receivedDocs: [],
-          lastContact: new Date().toISOString().split('T')[0],
-          bankInfo: null,
-          ssn_last4: null,
-        })
-        count++
-      }
-    }
-    setAddedClients(prev => [...prev, ...importedData.filter(r => r.name || r.Name).map(r => ({ name: r.name || r.Name, email: r.email || r.Email }))])
-    setImportedData(null)
-    toast.success(`Imported ${count} clients`)
   }
 
   const updateTemplate = (key, field, value) => {
@@ -278,7 +235,7 @@ export default function WelcomeOnboarding() {
                     <p className="text-xs text-gray-500">Enter client details one at a time</p>
                   </button>
                   <button
-                    onClick={() => setAddMethod('import')}
+                    onClick={() => setShowImportModal(true)}
                     className="p-6 border-2 border-gray-200 rounded-xl hover:border-sage-300 hover:bg-sage-50 transition-colors text-left"
                   >
                     <Upload size={24} className="text-sage-600 mb-3" />
@@ -352,58 +309,8 @@ export default function WelcomeOnboarding() {
                 </div>
               )}
 
-              {addMethod === 'import' && !importedData && (
-                <div>
-                  <div className="border-2 border-dashed border-gray-200 rounded-xl p-10 text-center hover:border-sage-300 transition-colors relative">
-                    <Upload size={28} className="mx-auto text-gray-400 mb-3" />
-                    <p className="text-sm font-medium text-gray-700">Drop your CSV file here</p>
-                    <p className="text-xs text-gray-400 mt-1 mb-4">or click to browse</p>
-                    <input
-                      type="file"
-                      accept=".csv"
-                      onChange={(e) => handleImportFile(e.target.files[0])}
-                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                    />
-                  </div>
-                  <div className="mt-3 p-3 bg-gray-50 rounded-lg">
-                    <p className="text-xs text-gray-500">
-                      <span className="font-medium text-gray-600">Expected columns:</span> name, email, phone, type, filing_status
-                    </p>
-                  </div>
-                  <button onClick={() => setAddMethod(null)} className="mt-3 text-xs text-gray-400 hover:text-gray-600">
-                    &larr; Back to options
-                  </button>
-                </div>
-              )}
-
-              {addMethod === 'import' && importedData && (
-                <div>
-                  <div className="flex items-center gap-3 p-4 bg-sage-50 rounded-lg mb-4">
-                    <Check size={18} className="text-sage-600" />
-                    <div>
-                      <p className="text-sm font-medium text-gray-900">{importedData.length} clients found</p>
-                      <p className="text-xs text-gray-500">Ready to import</p>
-                    </div>
-                  </div>
-                  <div className="max-h-36 overflow-auto mb-4 space-y-1">
-                    {importedData.slice(0, 5).map((row, i) => (
-                      <div key={i} className="flex items-center gap-2 py-1.5 text-sm">
-                        <FileText size={12} className="text-gray-400" />
-                        <span className="font-medium text-gray-900">{row.name || row.Name}</span>
-                        <span className="text-gray-400 text-xs">{row.email || row.Email}</span>
-                      </div>
-                    ))}
-                    {importedData.length > 5 && (
-                      <p className="text-xs text-gray-400">+{importedData.length - 5} more</p>
-                    )}
-                  </div>
-                  <div className="flex gap-3">
-                    <button onClick={() => setImportedData(null)} className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700">Back</button>
-                    <button onClick={handleImportConfirm} className="flex-1 py-2.5 bg-sage-500 text-white rounded-lg text-sm font-medium hover:bg-sage-600 transition-colors">
-                      Import All
-                    </button>
-                  </div>
-                </div>
+              {showImportModal && (
+                <ImportModal onClose={() => setShowImportModal(false)} />
               )}
 
               {/* Added clients list */}
